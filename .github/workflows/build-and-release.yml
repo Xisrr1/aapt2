@@ -1,0 +1,73 @@
+name: Build aapt2
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag'
+        required: true
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+    strategy:
+      matrix:
+        target_arch: [x86_64, x86, arm64-v8a, armeabi-v7a]
+      fail-fast: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: 'true'
+
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r23c
+          add-to-path: false
+      - run: ./build.sh ${{ matrix.target_arch }}
+        env:
+          NDK_TOOLCHAIN: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-name: dist-${{ matrix.target_arch }}
+          subject-path: dist
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: dist-${{ matrix.target_arch }}
+          path: dist
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare binaries
+        run: |
+          mkdir -p release
+          cp artifacts/dist-arm64-v8a/arm64-v8a/aapt2 release/aapt2_arm64-v8a
+          cp artifacts/dist-armeabi-v7a/armeabi-v7a/aapt2 release/aapt2_armeabi-v7a
+          cp artifacts/dist-x86_64/x86_64/aapt2 release/aapt2_x86_64
+          cp artifacts/dist-x86/x86/aapt2 release/aapt2_x86
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: ${{ github.event.inputs.version }}
+          files: release/*
